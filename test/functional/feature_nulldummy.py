@@ -13,6 +13,7 @@ Generate COINBASE_MATURITY (CB) more blocks to ensure the coinbases are mature.
 [Policy/Consensus] Check that the new NULLDUMMY rules are enforced on block CB + 5.
 """
 import time
+from test_framework.key import ECKey
 
 from test_framework.blocktools import (
     COINBASE_MATURITY,
@@ -21,7 +22,7 @@ from test_framework.blocktools import (
     create_block,
     create_transaction,
 )
-from test_framework.messages import CTransaction
+from test_framework.messages import CTransaction, tx_from_hex
 from test_framework.script import (
     OP_0,
     OP_TRUE,
@@ -31,6 +32,12 @@ from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
 )
+from test_framework.wallet import (
+    MiniWallet,
+    MiniWalletMode,
+    getnewdestination,
+)
+from test_framework.address import byte_to_base58
 
 NULLDUMMY_ERROR = "non-mandatory-script-verify-flag (Dummy CHECKMULTISIG argument must be zero)"
 
@@ -59,14 +66,21 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.skip_if_no_wallet()
 
     def run_test(self):
+        self.wallet = MiniWallet(test_node=self.nodes[0],mode=MiniWalletMode.RAW_P2PK)
         self.nodes[0].createwallet(wallet_name='wmulti', disable_private_keys=True)
         wmulti = self.nodes[0].get_wallet_rpc('wmulti')
         w0 = self.nodes[0].get_wallet_rpc(self.default_wallet_name)
-        self.address = w0.getnewaddress()
-        self.pubkey = w0.getaddressinfo(self.address)['pubkey']
-        self.ms_address = wmulti.addmultisigaddress(1, [self.pubkey])['address']
-        self.wit_address = w0.getnewaddress(address_type='p2sh-segwit')
-        self.wit_ms_address = wmulti.addmultisigaddress(1, [self.pubkey], '', 'p2sh-segwit')['address']
+        self.address = getnewdestination()[2]
+        self.priv_key = ECKey()
+        self.priv_key.generate()
+        self.pubkey = self.priv_key.get_pubkey().get_bytes().hex()
+        cms = self.nodes[0].createmultisig(1,[self.pubkey])
+        self.ms_address = cms["address"]
+        self.rs = cms["redeemScript"]
+        # self.wit_address = w0.getnewaddress(address_type='p2sh-segwit')
+        self.wit_address = getnewdestination(address_type='p2sh-segwit')[2]
+        # self.wit_ms_address = wmulti.addmultisigaddress(1, [self.pubkey], '', 'p2sh-segwit')['address']
+        self.wit_ms_address = self.nodes[0].createmultisig(1,[self.pubkey],'p2sh-segwit')['address']
         if not self.options.descriptors:
             # Legacy wallets need to import these so that they are watched by the wallet. This is unnecessary (and does not need to be tested) for descriptor wallets
             wmulti.importaddress(self.ms_address)
@@ -82,9 +96,23 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.lastblocktime = int(time.time()) + self.lastblockheight
 
         self.log.info(f"Test 1: NULLDUMMY compliant base transactions should be accepted to mempool and mined before activation [{COINBASE_MATURITY + 3}]")
-        test1txs = [create_transaction(self.nodes[0], coinbase_txid[0], self.ms_address, amount=49)]
+        inputs = [{"txid": coinbase_txid[0], "vout" : 0 }]
+        outputs = {self.ms_address : 49}
+        rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
+        signedtx = self.nodes[0].signrawtransactionwithkey(hexstring=rawtx, privkeys=[self.nodes[0].PRIV_KEYS[0][1]])
+        print(signedtx,"\n-----")
+        test1txs = [tx_from_hex(signedtx["hex"])]
         txid1 = self.nodes[0].sendrawtransaction(test1txs[0].serialize_with_witness().hex(), 0)
-        test1txs.append(create_transaction(self.nodes[0], txid1, self.ms_address, amount=48))
+
+        self.spk = test1txs[0].vout[0].scriptPubKey.hex()
+        inputs = [{"txid": txid1, "vout" : 0, "scriptPubKey": self.spk, "redeemScript": self.rs}]
+        outputs = {self.ms_address : 48}
+        rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
+        pk = byte_to_base58(self.priv_key.get_bytes(),239)
+        signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[{"txid": txid1, "vout" : 0, "scriptPubKey": self.spk, "redeemScript": self.rs}])
+        test1txs.append(tx_from_hex(signedtx["hex"]))
+        print(test1txs[1],"\n-----")
+        print(signedtx)
         txid2 = self.nodes[0].sendrawtransaction(test1txs[1].serialize_with_witness().hex(), 0)
         test1txs.append(create_transaction(self.nodes[0], coinbase_txid[1], self.wit_ms_address, amount=49))
         txid3 = self.nodes[0].sendrawtransaction(test1txs[2].serialize_with_witness().hex(), 0)
