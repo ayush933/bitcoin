@@ -80,7 +80,11 @@ class NULLDUMMYTest(BitcoinTestFramework):
         # self.wit_address = w0.getnewaddress(address_type='p2sh-segwit')
         self.wit_address = getnewdestination(address_type='p2sh-segwit')[2]
         # self.wit_ms_address = wmulti.addmultisigaddress(1, [self.pubkey], '', 'p2sh-segwit')['address']
-        self.wit_ms_address = self.nodes[0].createmultisig(1,[self.pubkey],'p2sh-segwit')['address']
+        wms = self.nodes[0].createmultisig(1,[self.pubkey],'p2sh-segwit')
+        print(wms)
+        self.wrs = wms["redeemScript"]
+        self.wit_ms_address = wms['address']
+        print(self.nodes[0].validateaddress(self.wit_ms_address),"\n----")
         if not self.options.descriptors:
             # Legacy wallets need to import these so that they are watched by the wallet. This is unnecessary (and does not need to be tested) for descriptor wallets
             wmulti.importaddress(self.ms_address)
@@ -100,26 +104,38 @@ class NULLDUMMYTest(BitcoinTestFramework):
         outputs = {self.ms_address : 49}
         rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
         signedtx = self.nodes[0].signrawtransactionwithkey(hexstring=rawtx, privkeys=[self.nodes[0].PRIV_KEYS[0][1]])
-        print(signedtx,"\n-----")
+        # print(signedtx,"\n-----")
         test1txs = [tx_from_hex(signedtx["hex"])]
         txid1 = self.nodes[0].sendrawtransaction(test1txs[0].serialize_with_witness().hex(), 0)
 
         self.spk = test1txs[0].vout[0].scriptPubKey.hex()
-        inputs = [{"txid": txid1, "vout" : 0, "scriptPubKey": self.spk, "redeemScript": self.rs}]
+        inputs = [{"txid": txid1, "vout" : 0}]#, "scriptPubKey": self.spk, "redeemScript": self.rs}]
         outputs = {self.ms_address : 48}
         rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
-        pk = byte_to_base58(self.priv_key.get_bytes(),239)
+        pk = byte_to_base58(self.priv_key.get_bytes()+b'\x01',239)
         signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[{"txid": txid1, "vout" : 0, "scriptPubKey": self.spk, "redeemScript": self.rs}])
         test1txs.append(tx_from_hex(signedtx["hex"]))
-        print(test1txs[1],"\n-----")
-        print(signedtx)
+        # print(test1txs[1],"\n-----")
+        # print(signedtx)
         txid2 = self.nodes[0].sendrawtransaction(test1txs[1].serialize_with_witness().hex(), 0)
-        test1txs.append(create_transaction(self.nodes[0], coinbase_txid[1], self.wit_ms_address, amount=49))
+        inputs = [{"txid": coinbase_txid[1], "vout" : 0}]
+        outputs = {self.wit_ms_address : 49}
+        rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
+        signedtx = self.nodes[0].signrawtransactionwithkey(hexstring=rawtx, privkeys=[self.nodes[0].PRIV_KEYS[0][1]])
+        test1txs.append(tx_from_hex(signedtx["hex"]))
+        print(test1txs[-1])
+        # test1txs.append(create_transaction(self.nodes[0], coinbase_txid[1], self.wit_ms_address, amount=49))
         txid3 = self.nodes[0].sendrawtransaction(test1txs[2].serialize_with_witness().hex(), 0)
+        self.wspk = test1txs[-1].vout[0].scriptPubKey.hex()
         self.block_submit(self.nodes[0], test1txs, accept=True)
 
         self.log.info("Test 2: Non-NULLDUMMY base multisig transaction should not be accepted to mempool before activation")
-        test2tx = create_transaction(self.nodes[0], txid2, self.ms_address, amount=47)
+        inputs = [{"txid": txid2, "vout" : 0}]#, "scriptPubKey": self.spk, "redeemScript": self.rs}]
+        outputs = {self.ms_address : 47}
+        rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
+        signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[{"txid": txid2, "vout" : 0, "scriptPubKey": self.spk, "redeemScript": self.rs}])
+        test2tx = tx_from_hex(signedtx["hex"])
+        # test2tx = create_transaction(self.nodes[0], txid2, self.ms_address, amount=47)
         invalidate_nulldummy_tx(test2tx)
         assert_raises_rpc_error(-26, NULLDUMMY_ERROR, self.nodes[0].sendrawtransaction, test2tx.serialize_with_witness().hex(), 0)
 
@@ -127,14 +143,25 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.block_submit(self.nodes[0], [test2tx], accept=True)
 
         self.log.info("Test 4: Non-NULLDUMMY base multisig transaction is invalid after activation")
-        test4tx = create_transaction(self.nodes[0], test2tx.hash, self.address, amount=46)
+        inputs = [{"txid": test2tx.hash, "vout" : 0}]#, "scriptPubKey": self.spk, "redeemScript": self.rs}]
+        outputs = {self.address : 46}
+        rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
+        signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[{"txid": txid2, "vout" : 0, "scriptPubKey": self.spk, "redeemScript": self.rs}])
+        test4tx = tx_from_hex(signedtx["hex"])
+        # test4tx = create_transaction(self.nodes[0], test2tx.hash, self.address, amount=46)
         test6txs = [CTransaction(test4tx)]
         invalidate_nulldummy_tx(test4tx)
         assert_raises_rpc_error(-26, NULLDUMMY_ERROR, self.nodes[0].sendrawtransaction, test4tx.serialize_with_witness().hex(), 0)
         self.block_submit(self.nodes[0], [test4tx], accept=False)
 
         self.log.info("Test 5: Non-NULLDUMMY P2WSH multisig transaction invalid after activation")
-        test5tx = create_transaction(self.nodes[0], txid3, self.wit_address, amount=48)
+        inputs = [{"txid": txid3, "vout" : 0,  "redeemScript": self.wrs}]
+        outputs = {self.wit_address : 48}
+        rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
+        signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[{"txid": txid3, "vout" : 0, "scriptPubKey": self.wspk, "redeemScript": self.wrs}])
+        test5tx = tx_from_hex(signedtx["hex"])
+        print(test5tx)
+        # test5tx = create_transaction(self.nodes[0], txid3, self.wit_address, amount=48)
         test6txs.append(CTransaction(test5tx))
         test5tx.wit.vtxinwit[0].scriptWitness.stack[0] = b'\x01'
         assert_raises_rpc_error(-26, NULLDUMMY_ERROR, self.nodes[0].sendrawtransaction, test5tx.serialize_with_witness().hex(), 0)
