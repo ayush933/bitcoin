@@ -257,7 +257,7 @@ BOOST_AUTO_TEST_CASE(versionbits_test)
 /** Check that ComputeBlockVersion will set the appropriate bit correctly */
 static void check_computeblockversion(VersionBitsCache& versionbitscache, const Consensus::Params& params, Consensus::DeploymentPos dep)
 {
-    // Clear the cache everytime
+    // Clear the cache every time
     versionbitscache.Clear();
 
     int64_t bit = params.vDeployments[dep].bit;
@@ -273,6 +273,7 @@ static void check_computeblockversion(VersionBitsCache& versionbitscache, const 
         nStartTime == Consensus::BIP9Deployment::NEVER_ACTIVE)
     {
         BOOST_CHECK_EQUAL(min_activation_height, 0);
+        BOOST_CHECK_EQUAL(nTimeout, Consensus::BIP9Deployment::NO_TIMEOUT);
         return;
     }
 
