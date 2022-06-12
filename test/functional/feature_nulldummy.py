@@ -13,6 +13,7 @@ Generate COINBASE_MATURITY (CB) more blocks to ensure the coinbases are mature.
 [Policy/Consensus] Check that the new NULLDUMMY rules are enforced on block CB + 5.
 """
 import time
+from test_framework.script_util import script_to_p2wsh_script,script_to_p2sh_p2wsh_script,key_to_p2sh_p2wpkh_script
 from test_framework.key import ECKey
 
 from test_framework.blocktools import (
@@ -37,7 +38,7 @@ from test_framework.wallet import (
     MiniWalletMode,
     getnewdestination,
 )
-from test_framework.address import byte_to_base58
+from test_framework.address import byte_to_base58,script_to_p2sh
 
 NULLDUMMY_ERROR = "non-mandatory-script-verify-flag (Dummy CHECKMULTISIG argument must be zero)"
 
@@ -79,6 +80,7 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.rs = cms["redeemScript"]
         # self.wit_address = w0.getnewaddress(address_type='p2sh-segwit')
         self.wit_address = getnewdestination(address_type='p2sh-segwit')[2]
+        print(self.wit_address)
         # self.wit_ms_address = wmulti.addmultisigaddress(1, [self.pubkey], '', 'p2sh-segwit')['address']
         wms = self.nodes[0].createmultisig(1,[self.pubkey],'p2sh-segwit')
         print(wms)
@@ -115,13 +117,12 @@ class NULLDUMMYTest(BitcoinTestFramework):
         pk = byte_to_base58(self.priv_key.get_bytes()+b'\x01',239)
         signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[{"txid": txid1, "vout" : 0, "scriptPubKey": self.spk, "redeemScript": self.rs}])
         test1txs.append(tx_from_hex(signedtx["hex"]))
-        # print(test1txs[1],"\n-----")
-        # print(signedtx)
         txid2 = self.nodes[0].sendrawtransaction(test1txs[1].serialize_with_witness().hex(), 0)
         inputs = [{"txid": coinbase_txid[1], "vout" : 0}]
         outputs = {self.wit_ms_address : 49}
         rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
         signedtx = self.nodes[0].signrawtransactionwithkey(hexstring=rawtx, privkeys=[self.nodes[0].PRIV_KEYS[0][1]])
+        print(signedtx)
         test1txs.append(tx_from_hex(signedtx["hex"]))
         print(test1txs[-1])
         # test1txs.append(create_transaction(self.nodes[0], coinbase_txid[1], self.wit_ms_address, amount=49))
@@ -155,12 +156,14 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.block_submit(self.nodes[0], [test4tx], accept=False)
 
         self.log.info("Test 5: Non-NULLDUMMY P2WSH multisig transaction invalid after activation")
-        inputs = [{"txid": txid3, "vout" : 0,  "redeemScript": self.wrs}]
+        input = {"txid": txid3, "vout" : 0,  "scriptPubKey": self.wspk}
+        input["witnessScript"] = self.wrs
+        input["redeemScript"] = script_to_p2wsh_script(self.wrs).hex()
         outputs = {self.wit_address : 48}
-        rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
-        signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[{"txid": txid3, "vout" : 0, "scriptPubKey": self.wspk, "redeemScript": self.wrs}])
+        rawtx = self.nodes[0].createrawtransaction([input],outputs)
+        signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[input])
         test5tx = tx_from_hex(signedtx["hex"])
-        print(test5tx)
+        print(signedtx)
         # test5tx = create_transaction(self.nodes[0], txid3, self.wit_address, amount=48)
         test6txs.append(CTransaction(test5tx))
         test5tx.wit.vtxinwit[0].scriptWitness.stack[0] = b'\x01'
