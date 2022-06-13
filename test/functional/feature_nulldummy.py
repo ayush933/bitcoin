@@ -13,7 +13,6 @@ Generate COINBASE_MATURITY (CB) more blocks to ensure the coinbases are mature.
 [Policy/Consensus] Check that the new NULLDUMMY rules are enforced on block CB + 5.
 """
 import time
-from test_framework.script_util import script_to_p2wsh_script,script_to_p2sh_p2wsh_script,key_to_p2sh_p2wpkh_script
 from test_framework.key import ECKey
 
 from test_framework.blocktools import (
@@ -38,7 +37,7 @@ from test_framework.wallet import (
     MiniWalletMode,
     getnewdestination,
 )
-from test_framework.address import byte_to_base58,script_to_p2sh
+from test_framework.address import byte_to_base58
 
 NULLDUMMY_ERROR = "non-mandatory-script-verify-flag (Dummy CHECKMULTISIG argument must be zero)"
 
@@ -63,14 +62,12 @@ class NULLDUMMYTest(BitcoinTestFramework):
             '-par=1',  # Use only one script thread to get the exact reject reason for testing
         ]]
 
-    def skip_test_if_missing_module(self):
-        self.skip_if_no_wallet()
 
     def run_test(self):
-        self.wallet = MiniWallet(test_node=self.nodes[0],mode=MiniWalletMode.RAW_P2PK)
-        self.nodes[0].createwallet(wallet_name='wmulti', disable_private_keys=True)
-        wmulti = self.nodes[0].get_wallet_rpc('wmulti')
-        w0 = self.nodes[0].get_wallet_rpc(self.default_wallet_name)
+        # self.wallet = MiniWallet(test_node=self.nodes[0],mode=MiniWalletMode.RAW_P2PK)
+        # self.nodes[0].createwallet(wallet_name='wmulti', disable_private_keys=True)
+        # wmulti = self.nodes[0].get_wallet_rpc('wmulti')
+        # w0 = self.nodes[0].get_wallet_rpc(self.default_wallet_name)
         self.address = getnewdestination()[2]
         self.priv_key = ECKey()
         self.priv_key.generate()
@@ -83,14 +80,8 @@ class NULLDUMMYTest(BitcoinTestFramework):
         print(self.wit_address)
         # self.wit_ms_address = wmulti.addmultisigaddress(1, [self.pubkey], '', 'p2sh-segwit')['address']
         wms = self.nodes[0].createmultisig(1,[self.pubkey],'p2sh-segwit')
-        print(wms)
         self.wrs = wms["redeemScript"]
         self.wit_ms_address = wms['address']
-        print(self.nodes[0].validateaddress(self.wit_ms_address),"\n----")
-        if not self.options.descriptors:
-            # Legacy wallets need to import these so that they are watched by the wallet. This is unnecessary (and does not need to be tested) for descriptor wallets
-            wmulti.importaddress(self.ms_address)
-            wmulti.importaddress(self.wit_ms_address)
 
         self.coinbase_blocks = self.generate(self.nodes[0], 2)  # block height = 2
         coinbase_txid = []
@@ -122,9 +113,7 @@ class NULLDUMMYTest(BitcoinTestFramework):
         outputs = {self.wit_ms_address : 49}
         rawtx = self.nodes[0].createrawtransaction(inputs,outputs)
         signedtx = self.nodes[0].signrawtransactionwithkey(hexstring=rawtx, privkeys=[self.nodes[0].PRIV_KEYS[0][1]])
-        print(signedtx)
         test1txs.append(tx_from_hex(signedtx["hex"]))
-        print(test1txs[-1])
         # test1txs.append(create_transaction(self.nodes[0], coinbase_txid[1], self.wit_ms_address, amount=49))
         txid3 = self.nodes[0].sendrawtransaction(test1txs[2].serialize_with_witness().hex(), 0)
         self.wspk = test1txs[-1].vout[0].scriptPubKey.hex()
@@ -156,14 +145,12 @@ class NULLDUMMYTest(BitcoinTestFramework):
         self.block_submit(self.nodes[0], [test4tx], accept=False)
 
         self.log.info("Test 5: Non-NULLDUMMY P2WSH multisig transaction invalid after activation")
-        input = {"txid": txid3, "vout" : 0,  "scriptPubKey": self.wspk}
+        input = {"txid": txid3, "vout" : 0,  "scriptPubKey": self.wspk, "amount": 49}
         input["witnessScript"] = self.wrs
-        input["redeemScript"] = script_to_p2wsh_script(self.wrs).hex()
         outputs = {self.wit_address : 48}
         rawtx = self.nodes[0].createrawtransaction([input],outputs)
         signedtx = self.nodes[0].signrawtransactionwithkey(rawtx, [pk],[input])
         test5tx = tx_from_hex(signedtx["hex"])
-        print(signedtx)
         # test5tx = create_transaction(self.nodes[0], txid3, self.wit_address, amount=48)
         test6txs.append(CTransaction(test5tx))
         test5tx.wit.vtxinwit[0].scriptWitness.stack[0] = b'\x01'
